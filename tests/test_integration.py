@@ -9,6 +9,8 @@ import types
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+import probatio
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -53,8 +55,18 @@ class FakeFlow:
 
 module("homeassistant")
 module("homeassistant.components")
+
+
+def websocket_command(schema):
+    """Retain declarations for validation with the real HA decorator in CI."""
+    def decorate(func):
+        func._ws_declared_schema = schema
+        return func
+    return decorate
+
+
 websocket_api = module("homeassistant.components.websocket_api",
-                       websocket_command=lambda schema: lambda func: func,
+                       websocket_command=websocket_command,
                        async_response=lambda func: func, async_register_command=Mock())
 frontend = module("homeassistant.components.frontend", add_extra_js_url=Mock(), remove_extra_js_url=Mock())
 module("homeassistant.components.http", StaticPathConfig=StaticPathConfig)

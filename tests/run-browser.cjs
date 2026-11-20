@@ -26,6 +26,8 @@ const root=path.resolve(__dirname,'..');
     await page.evaluate(()=>window.makeEditor().launch());
     count+=(await require('./browser-service.cjs')(page,'hmi-room-panel-editor')).checks;
     count+=(await require('./browser-android.cjs')(page)).checks;
+    count+=(await require('./browser-interactions.cjs')(page,base+'/tests/preview.html')).checks;
+    count+=(await require('./browser-appearance.cjs')(page,base+'/tests/preview.html')).checks;
     if(errors.length)throw Error(errors.join('\n'));
     console.log(count+' browser checks passed using offline fixtures.');
   }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

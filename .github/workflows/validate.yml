@@ -14,6 +14,8 @@ jobs:
         with:
           python-version: '3.13'
       - run: python scripts/build_frontend.py
+      - run: pip install -r tests/requirements.txt
+      - run: python scripts/check_ha_schema.py
       - run: python -m unittest discover -s tests -v
   hacs:
     name: Custom repository package
@@ -41,3 +43,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: home-assistant/actions/hassfest@master
+  release:
+    name: Publish version after checks
+    needs: [tests, hacs, browser, hassfest]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: home-panel-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const manifest = JSON.parse(fs.readFileSync('custom_components/hmi_panel/manifest.json', 'utf8'));
+            const version = manifest.version;
+            if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Expected a stable semantic version');
+            const tag = `v${version}`;
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({...context.repo, tag});
+              core.info(`Release already exists: ${existing.data.html_url}`);
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const body = fs.readFileSync(`docs/releases/${version}.md`, 'utf8');
+            const result = await github.rest.repos.createRelease({
+              ...context.repo, tag_name: tag, target_commitish: context.sha,
+              name: `Home Panel ${version}`, body, draft: false, prerelease: false,
+              make_latest: 'true'
+            });
+            core.info(`Published ${result.data.html_url}`);

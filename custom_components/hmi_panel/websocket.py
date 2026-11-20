@@ -2,6 +2,8 @@
 from pathlib import Path
 import logging
 
+import probatio
+
 from homeassistant.components import websocket_api
 from homeassistant.helpers.storage import Store
 
@@ -11,7 +13,16 @@ from .provision import PanelManager, ProvisionError
 _LOGGER = logging.getLogger(__name__)
 
 
-@websocket_api.websocket_command({"type": "hmi_panel/manage_panel"})
+@websocket_api.websocket_command({
+    probatio.Required("type"): "hmi_panel/manage_panel",
+    probatio.Required("action"): probatio.In(("list", "probe", "install")),
+    probatio.Optional("host"): str,
+    probatio.Optional("port"): probatio.All(int, probatio.Range(min=1, max=65535)),
+    probatio.Optional("url"): str,
+    probatio.Optional("name"): str,
+    probatio.Optional("full_kiosk"): bool,
+    probatio.Optional("probe_token"): str,
+})
 @websocket_api.async_response
 async def async_manage_panel(hass, connection, msg):
     """Explicitly validate all inputs before constructing a manager or opening ADB."""

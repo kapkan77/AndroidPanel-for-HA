@@ -1,9 +1,59 @@
-  // Logical coordinates are always 480×480, independent of the browser zoom.
+  // Layout coordinates use the configured canvas size; old cards default to 480×480.
   const clone = value => JSON.parse(JSON.stringify(value));
   const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const finite = (value,fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
   const clamp = (n,a,b) => Math.max(a,Math.min(b,n));
   const color = (s,fallback) => /^#[0-9a-f]{3,8}$/i.test(s||'') ? s : fallback;
+  const panelSize = (c={}) => ({width:clamp(Math.round(finite(c.panel_width,480)),240,4096),height:clamp(Math.round(finite(c.panel_height,480)),240,4096)});
+  const DESIGNS={calm:'Спокойный',minimal:'Минимализм',contrast:'Контрастный'};
+  const PALETTES={
+    calm:{dark:['#101418','#1c2228','#f1f3f5','#a2adb6','#f4b679','#3d2b1d'],light:['#f5f2ed','#ffffff','#28231e','#665e54','#955019','#f6e5d1']},
+    minimal:{dark:['#141619','#202327','#f4f5f6','#adb3bb','#bdc8d5','#343d49'],light:['#f4f5f7','#ffffff','#20252c','#59636f','#38556e','#e0e9ef']},
+    contrast:{dark:['#000000','#141414','#ffffff','#d2d2d2','#80e7ff','#003f50'],light:['#ffffff','#edf0f3','#101010','#414141','#004e74','#d0ecff']}
+  };
+  function palette(c={}){const [bg,surface,text,muted,accent,active]=PALETTES[c.design||'calm']?.[c.theme||'dark']||PALETTES.calm.dark;return {bg,surface,text,muted,accent,active};}
+  const plainWidget = w => ['thermostat','header','text','clock','window','service_title','service_status','service_schedule'].includes(w.type);
+  function styleWidget(w,c){const p=palette(c);return {...w,background:plainWidget(w)?p.bg:p.surface,color:['service_status','service_schedule'].includes(w.type)?p.muted:p.text,icon_color:p.muted,radius:c.design==='contrast'?4:c.design==='minimal'?8:16};}
+  function applyDesign(c,design,theme){
+    c.design=Object.hasOwn(DESIGNS,design)?design:'calm';c.theme=theme==='light'?'light':'dark';c.background=palette(c).bg;
+    c.widgets=(c.widgets||[]).map(w=>styleWidget(w,c));
+    for(const page of c.pages||[]){page.background=c.background;page.widgets=page.widgets.map(w=>styleWidget(w,c));}
+    c.service_menu={...c.service_menu,background:c.background,widgets:serviceWidgets(c).map(w=>styleWidget(w,c))};
+  }
+  function resizePanel(c,width,height,scale=true){
+    const before=panelSize(c),next=panelSize({panel_width:width,panel_height:height}),sx=next.width/before.width,sy=next.height/before.height,k=Math.min(sx,sy);
+    const resize=w=>{const n={...w};if(scale){for(const key of ['x','w'])n[key]=Math.round(w[key]*sx);for(const key of ['y','h'])n[key]=Math.round(w[key]*sy);for(const key of ['font_size','label_size','icon_size','radius'])if(w[key]!=null)n[key]=Math.round(w[key]*k*10)/10;}return normalizeWidget(n,0,{panel_width:next.width,panel_height:next.height});};
+    const service=serviceWidgets(c);c.panel_width=next.width;c.panel_height=next.height;
+    c.widgets=(c.widgets||[]).map(resize);for(const page of c.pages||[])page.widgets=page.widgets.map(resize);
+    c.service_menu={...c.service_menu,widgets:service.map(resize)};
+  }
+  function fitBaseWidgets(list,c){const size=panelSize(c),sx=size.width/480,sy=size.height/480,k=Math.min(sx,sy);return normalizeWidgets(list).map(w=>normalizeWidget({...w,x:Math.round(w.x*sx),y:Math.round(w.y*sy),w:Math.round(w.w*sx),h:Math.round(w.h*sy),font_size:w.font_size*k,label_size:w.label_size*k,icon_size:w.icon_size*k,radius:w.radius*k},0,c));}
+  function themeStyle(el,c){const p=palette(c),size=panelSize(c);for(const [name,value] of Object.entries({bg:p.bg,surface:p.surface,text:p.text,muted:p.muted,accent:p.accent,active:p.active,u:480/size.width+'cqi'}))el.style.setProperty('--'+name,value);el.dataset.design=c.design||'calm';el.style.colorScheme=c.theme==='light'?'light':'dark';}
+  const responsiveCss = css => css.replace(/(-?(?:\d*\.)?\d+)cqi/g,(_,n)=>`calc(${n} * var(--u,1cqi))`);
+  // Keep buttons and focus alive when HA pushes a new state between pointerdown and click.
+  function patchMarkup(container,html){
+    if(container._markup===html)return;const template=document.createElement('template');template.innerHTML=html;
+    function ownAttributes(node,source){if(node.nodeType!==1)return;node._renderAttrs=new Set([...source.attributes].map(a=>a.name));for(let i=0;i<source.childNodes.length;i++)if(node.childNodes[i])ownAttributes(node.childNodes[i],source.childNodes[i]);}
+    function sync(parent,source){
+      let cursor=parent.firstChild;
+      for(const next of [...source.childNodes]){
+        const key=next.nodeType===1&&(next.getAttribute('data-widget-id')||next.getAttribute('data-page-id'));
+        let current=cursor;
+        if(key)current=[...parent.children].find(n=>(n.getAttribute('data-widget-id')||n.getAttribute('data-page-id'))===key)||null;
+        if(!current||current.nodeType!==next.nodeType||current.nodeName!==next.nodeName){const added=next.cloneNode(true);ownAttributes(added,next);parent.insertBefore(added,cursor);cursor=added.nextSibling;continue;}
+        if(current!==cursor)parent.insertBefore(current,cursor);
+        if(next.nodeType===1){
+          for(const name of current._renderAttrs||[])if(!next.hasAttribute(name))current.removeAttribute(name);
+          for(const a of [...next.attributes])if(current.getAttribute(a.name)!==a.value)current.setAttribute(a.name,a.value);
+          current._renderAttrs=new Set([...next.attributes].map(a=>a.name));
+          sync(current,next);
+        }else if(current.nodeValue!==next.nodeValue)current.nodeValue=next.nodeValue;
+        cursor=current.nextSibling;
+      }
+      while(cursor){const removed=cursor;cursor=cursor.nextSibling;removed.remove();}
+    }
+    sync(container,template.content);container._markup=html;
+  }
   const TYPES = {header:'Заголовок комнаты',thermostat:'Термостат',sensor:'Показатель',light:'Свет',humidifier:'Увлажнитель',button:'Кнопка устройства',window:'Окно / дверь',text:'Текст',clock:'Часы',navigation:'Открыть экран / меню',alarm:'Сигнализация HA',keypad:'Цифровая клавиатура',settings:'Служебное меню',shape:'Подложка'};
   const DEFAULT_ICONS={light:'mdi:lamp-outline',humidifier:'mdi:air-humidifier',settings:'mdi:cog-outline',window:'mdi:window-closed-variant',button:'mdi:power',navigation:'mdi:arrow-right',alarm:'mdi:shield-home-outline',keypad:'mdi:dialpad'};
   const SERVICE_TYPES={service_back:'Назад из меню',service_title:'Заголовок меню',service_lock:'Защита от детей',service_status:'Состояние киоска',service_schedule:'Ночное расписание',service_pin:'PIN и доступ',service_clock:'Показать ночные часы',service_exit:'Выход из киоска',service_links:'Ссылки меню'};
@@ -11,32 +61,32 @@
   Object.assign(DEFAULT_ICONS,{service_back:'mdi:arrow-left',service_lock:'mdi:shield-lock-outline',service_pin:'mdi:shield-key-outline',service_clock:'mdi:clock-outline',service_exit:'mdi:exit-to-app'});
   const REQUIRED_SERVICE_TYPES=['service_back','service_lock','service_pin','service_exit'];
   const widgetIcon = (name,extra='') => /^mdi:[a-z0-9-]+$/.test(name||'') ? `<ha-icon icon="${esc(name)}" ${extra}></ha-icon>` : '';
-  function normalizeWidget(input,index=0) {
+  function normalizeWidget(input,index=0,c={}) {
     const type=Object.hasOwn(TYPES,input.type)?input.type:'sensor';
-    const w=clamp(finite(input.w,160),32,480),h=clamp(finite(input.h,64),32,480);
+    const size=panelSize(c),w=clamp(finite(input.w,160),32,size.width),h=clamp(finite(input.h,64),32,size.height);
     return {...input,id:String(input.id||'widget_'+index).replace(/[^a-zA-Z0-9_-]/g,'_'),type,
-      x:clamp(finite(input.x,16),0,480-w),y:clamp(finite(input.y,16),0,480-h),w,h,
-      font_size:clamp(finite(input.font_size,type==='thermostat'?64:22),8,120),
-      label_size:clamp(finite(input.label_size,13),8,48),icon_size:clamp(finite(input.icon_size,24),8,96),
-      radius:clamp(finite(input.radius,16),0,80),background:color(input.background,type==='thermostat'||type==='header'||type==='text'||type==='clock'||type==='window'?'#101418':'#1c2228'),
+      x:clamp(finite(input.x,16),0,size.width-w),y:clamp(finite(input.y,16),0,size.height-h),w,h,
+      font_size:clamp(finite(input.font_size,type==='thermostat'?64:22),8,512),
+      label_size:clamp(finite(input.label_size,13),8,192),icon_size:clamp(finite(input.icon_size,24),8,384),
+      radius:clamp(finite(input.radius,16),0,320),background:color(input.background,type==='thermostat'||type==='header'||type==='text'||type==='clock'||type==='window'?'#101418':'#1c2228'),
       color:color(input.color,'#f1f3f5'),icon_color:color(input.icon_color,'#a2adb6'),icon:input.icon ?? DEFAULT_ICONS[type] ?? '',visible:input.visible!==false};
   }
-  function normalizeWidgets(widgets) {
+  function normalizeWidgets(widgets,c={}) {
     if(!Array.isArray(widgets)||widgets.length>40)throw new Error('На экране может быть не более 40 элементов');
     const ids=new Set();
-    return widgets.map((w,i)=>{if(!w||typeof w!=='object'||Array.isArray(w))throw new Error('Неверный элемент макета');const n=normalizeWidget(w,i);while(ids.has(n.id))n.id+='_'+i;ids.add(n.id);return n;});
+    return widgets.map((w,i)=>{if(!w||typeof w!=='object'||Array.isArray(w))throw new Error('Неверный элемент макета');const n=normalizeWidget(w,i,c);while(ids.has(n.id))n.id+='_'+i;ids.add(n.id);return n;});
   }
-  function normalizePages(pages=[]) {
+  function normalizePages(pages=[],c={}) {
     if(!Array.isArray(pages)||pages.length>9)throw new Error('Можно добавить не более 9 экранов и меню');
-    const ids=new Set(['main','service']);return pages.map((p,i)=>{if(!p||typeof p!=='object')throw new Error('Неверный экран');let id=String(p.id||'page_'+i).replace(/[^a-zA-Z0-9_-]/g,'_');while(ids.has(id))id+='_'+i;ids.add(id);return {...p,id,title:String(p.title||'Экран '+(i+2)).slice(0,80),kind:p.kind==='menu'?'menu':'page',widgets:splitHeaderWidgets(p.widgets||[])};});
+    const ids=new Set(['main','service']);return pages.map((p,i)=>{if(!p||typeof p!=='object')throw new Error('Неверный экран');let id=String(p.id||'page_'+i).replace(/[^a-zA-Z0-9_-]/g,'_');while(ids.has(id))id+='_'+i;ids.add(id);return {...p,id,title:String(p.title||'Экран '+(i+2)).slice(0,80),kind:p.kind==='menu'?'menu':'page',widgets:splitHeaderWidgets(p.widgets||[],c)};});
   }
-  function splitHeaderWidgets(widgets){
-    const list=normalizeWidgets(widgets),ids=new Set(list.map(w=>w.id)),out=[];
-    for(const original of list){const w={...original};if(w.type==='header'&&w.show_settings!==false){let id=w.id+'_settings';while(ids.has(id))id+='_gear';ids.add(id);const size=Math.min(44,w.h,Math.max(32,w.w/3)),gear=normalizeWidget({id,type:'settings',x:w.x+w.w-size,y:w.y,w:size,h:w.h,label:'',icon_size:w.icon_size,background:'#1c2228',radius:12,visible:w.visible});w.w=Math.max(32,w.w-size-8);w.show_settings=false;out.push(w,gear);}else out.push(w);}return out;
+  function splitHeaderWidgets(widgets,c={}){
+    const list=normalizeWidgets(widgets,c),ids=new Set(list.map(w=>w.id)),out=[];
+    for(const original of list){const w={...original};if(w.type==='header'&&w.show_settings!==false){let id=w.id+'_settings';while(ids.has(id))id+='_gear';ids.add(id);const size=Math.min(44,w.h,Math.max(32,w.w/3)),gear=normalizeWidget({id,type:'settings',x:w.x+w.w-size,y:w.y,w:size,h:w.h,label:'',icon_size:w.icon_size,background:'#1c2228',radius:12,visible:w.visible},0,c);w.w=Math.max(32,w.w-size-8);w.show_settings=false;out.push(w,gear);}else out.push(w);}return out;
   }
   function initialServiceWidgets(c){
     const menu=c.service_menu||{},links=!!menu.links?.length;
-    return normalizeWidgets([
+    return fitBaseWidgets([
       {id:'service_back',type:'service_back',x:16,y:16,w:44,h:44,label:'',radius:12},
       {id:'service_title',type:'service_title',x:72,y:16,w:392,h:44,label:menu.title||'Служебное меню',font_size:18,background:'#101418'},
       {id:'service_lock',type:'service_lock',x:16,y:links?88:96,w:448,h:56,label:'Защита от детей',font_size:16},
@@ -46,18 +96,18 @@
       {id:'service_clock',type:'service_clock',x:96,y:links?296:328,w:288,h:48,label:'Показать часы',font_size:16,visible:menu.show_clock_preview!==false},
       {id:'service_exit',type:'service_exit',x:96,y:links?352:392,w:288,h:48,label:'Выйти из киоска',font_size:16},
       ...(links?[{id:'service_links',type:'service_links',x:16,y:416,w:448,h:48,font_size:15}]:[])
-    ]);
+    ],c);
   }
   function serviceWidgets(c){
-    const defaults=initialServiceWidgets(c),list=c.service_menu?.widgets?normalizeWidgets(c.service_menu.widgets):defaults;
+    const defaults=initialServiceWidgets(c),list=c.service_menu?.widgets?normalizeWidgets(c.service_menu.widgets,c):defaults;
     const missing=REQUIRED_SERVICE_TYPES.filter(type=>!list.some(w=>w.type===type));if(list.length+missing.length>40)throw new Error('Оставьте место для кнопок возврата, защиты и выхода');
-    for(const type of REQUIRED_SERVICE_TYPES){const found=list.find(w=>w.type===type);if(found)found.visible=true;else{const added={...defaults.find(w=>w.type===type)};while(list.some(w=>w.id===added.id))added.id+='_system';if(type==='service_pin'){const free=p=>!list.some(w=>w.visible&&w.type!=='shape'&&p.x<w.x+w.w&&p.x+p.w>w.x&&p.y<w.y+w.h&&p.y+p.h>w.y);if(!free(added)){find:for(let y=64;y+added.h<=480;y+=8)for(let x=16;x+added.w<=480;x+=8){const candidate={...added,x,y};if(free(candidate)){Object.assign(added,candidate);break find;}}}}list.push(added);}}
+    for(const type of REQUIRED_SERVICE_TYPES){const found=list.find(w=>w.type===type);if(found)found.visible=true;else{const added={...defaults.find(w=>w.type===type)};while(list.some(w=>w.id===added.id))added.id+='_system';if(type==='service_pin'){const free=p=>!list.some(w=>w.visible&&w.type!=='shape'&&p.x<w.x+w.w&&p.x+p.w>w.x&&p.y<w.y+w.h&&p.y+p.h>w.y);if(!free(added)){find:for(let y=64;y+added.h<=panelSize(c).height;y+=8)for(let x=16;x+added.w<=panelSize(c).width;x+=8){const candidate={...added,x,y};if(free(candidate)){Object.assign(added,candidate);break find;}}}}list.push(added);}}
     return list;
   }
   const ALARM_NAMES={disarmed:'Снята с охраны',armed_home:'Охрана: дома',armed_away:'Охрана: никого нет',armed_night:'Ночная охрана',arming:'Постановка на охрану',pending:'Ожидание',triggered:'Тревога',disarming:'Снятие с охраны'};
   const ALARM_ACTIONS={alarm_disarm:{title:'Снять с охраны',state:'disarmed'},alarm_arm_home:{title:'Охрана: дома',state:'armed_home'},alarm_arm_away:{title:'Охрана: никого нет',state:'armed_away'},alarm_arm_night:{title:'Ночная охрана',state:'armed_night'}};
   function initialWidgets(c) {
-    return normalizeWidgets([
+    return fitBaseWidgets([
       {id:'header',type:'header',x:16,y:16,w:396,h:40,label:c.room||'Комната',font_size:22,show_settings:false},
       {id:'settings',type:'settings',x:420,y:16,w:44,h:40,label:'',icon_size:24,radius:12},
       {id:'climate',type:'thermostat',x:16,y:64,w:448,h:176,entity:c.heating,temperature_entity:c.temperature,label:'Сейчас в комнате',font_size:64},
@@ -68,7 +118,7 @@
       {id:'humidifier',type:'humidifier',x:16,y:384,w:448,h:56,entity:c.humidifier,label:'Увлажнитель',font_size:16},
       {id:'window',type:'window',x:264,y:448,w:200,h:32,entity:c.window,label:'Окно',font_size:12,icon_size:16},
       {id:'heat',type:'button',x:16,y:448,w:128,h:32,entity:c.heating,label:'Обогрев',font_size:12,icon_size:18,icon:'mdi:fire'}
-    ]);
+    ],c);
   }
   const MODE_NAMES={Auto:'Авто',Low:'Тихо',Mid:'Средний',High:'Макс.'};
   function widgetMarkup(w,hass,c) {
@@ -104,10 +154,13 @@
     else if(w.type==='window')body=`${ico}<span>${esc(label)}: ${valid?(state.state==='on'?'открыто':'закрыто'):'нет данных'}</span>`;
     else if(w.type==='clock')body=`<strong class="gw-value">${esc(new Intl.DateTimeFormat('ru-RU',{timeZone:timezoneFor(c,hass),hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date()))}</strong>${w.show_date===false?'':`<small>${esc(new Intl.DateTimeFormat('ru-RU',{timeZone:timezoneFor(c,hass),day:'numeric',month:'long'}).format(new Date()))}</small>`}`;
     else if(w.type==='text')body=`${ico}<span class="gw-text">${esc(w.text??w.label??'Ваш текст')}</span>`;
-    const style=`left:${w.x/4.8}%;top:${w.y/4.8}%;width:${w.w/4.8}%;height:${w.h/4.8}%;--wf:${w.font_size/4.8}cqi;--wl:${w.label_size/4.8}cqi;--wi:${w.icon_size/4.8}cqi;--wr:${w.radius/4.8}cqi;--wb:${w.background};--wc:${w.color};--wic:${w.icon_color}`;
+    const size=panelSize(c),unit=size.width/100;
+    const style=`left:${100*w.x/size.width}%;top:${100*w.y/size.height}%;width:${100*w.w/size.width}%;height:${100*w.h/size.height}%;--wf:${w.font_size/unit}cqi;--wl:${w.label_size/unit}cqi;--wi:${w.icon_size/unit}cqi;--wr:${w.radius/unit}cqi;--wb:${w.background};--wc:${w.color};--wic:${w.icon_color}`;
     return `<div class="grid-widget gw-${w.type}${w.visible?'':' gw-hidden'}" style="${style}" data-widget-id="${esc(w.id)}"><div class="gw-content">${body}</div></div>`;
   }
-  const GRID_CSS=`
+  const GRID_CSS=responsiveCss(`
     .legacy-main{display:contents}.grid-mode{display:block!important;padding:0!important}.grid-mode>.legacy-main{display:none}.free-grid{position:absolute;inset:0;container-type:inline-size;overflow:hidden;background:var(--bg,#101418);color:#f1f3f5;font-family:system-ui,sans-serif;line-height:1.2;font-variant-numeric:tabular-nums;touch-action:pan-y}.gw-security>span{display:flex;flex-direction:column;gap:1cqi;text-align:left}.gw-lock{justify-content:flex-start!important}.gw-lock .gw-name{flex:1;text-align:left}.gw-toggle{flex-shrink:0;display:block;width:10cqi;height:5.8cqi;background:#495766;border-radius:4cqi;padding:.6cqi;box-sizing:border-box}.gw-toggle:after{content:'';display:block;width:4.6cqi;height:4.6cqi;border-radius:50%;background:#f1f3f5}.gw-lock[aria-checked=true] .gw-toggle{background:#f4b679}.gw-lock[aria-checked=true] .gw-toggle:after{transform:translateX(4.2cqi);background:#101418}.gw-links{height:100%;width:100%;overflow:auto;display:flex;flex-direction:column;gap:1cqi}.gw-links button{min-height:8cqi!important}
     .grid-widget{position:absolute;color:var(--wc);font-size:var(--wf);border-radius:var(--wr);background:var(--wb);overflow:hidden;box-sizing:border-box}.gw-hidden{display:none}.gw-content{display:flex;align-items:center;justify-content:center;gap:1.7cqi;height:100%;width:100%;min-width:0;box-sizing:border-box;padding:1.3cqi 1.7cqi}.grid-widget button{display:inline-flex;align-items:center;justify-content:center;gap:1.7cqi;flex-shrink:0;min-height:0;margin:0;border:0;border-radius:2.5cqi;padding:1.7cqi;background:#101418;color:inherit;font:inherit;cursor:pointer}.grid-widget button:disabled{opacity:.4}.grid-widget button[aria-pressed=true]{background:#3d2b1d;color:#f4b679}.grid-widget ha-icon{--mdc-icon-size:var(--wi);color:var(--wic);flex-shrink:0}.grid-widget button[aria-pressed=true] ha-icon{color:inherit}.grid-widget strong{font-size:inherit;font-weight:500}.grid-widget small{font-size:var(--wl);color:#a2adb6;display:flex;align-items:center;gap:1cqi}.grid-widget .gw-value{font-size:var(--wf);line-height:1.1;white-space:nowrap}.grid-widget em{font-size:var(--wl);font-style:normal;margin-left:.8cqi;color:#a2adb6}.grid-widget sup{font-size:.38em;vertical-align:top;position:relative;top:.25em;margin-left:.4cqi}.grid-widget .gw-fill{width:100%;height:100%;background:none;padding:0}.gw-header .gw-content{justify-content:space-between}.gw-title{min-width:0;display:flex;flex-direction:column;gap:1cqi}.gw-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gw-thermostat .gw-content,.gw-sensor .gw-content,.gw-clock .gw-content{flex-direction:column;gap:1.2cqi}.gw-adjust{display:flex;align-items:center;justify-content:center;gap:6cqi;font-size:5.6cqi}.gw-adjust button{width:12cqi;height:10cqi;background:#1c2228}.gw-adjust>span{display:flex;flex-direction:column;align-items:center;min-width:18cqi;gap:.6cqi}.gw-adjust b{font-weight:500}.gw-device-label{background:none!important;flex:1;min-width:0;justify-content:flex-start!important;text-align:left;padding:0!important}.gw-device-label>span{display:flex;flex-direction:column;gap:.8cqi;min-width:0}.gw-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gw-power{width:9.2cqi;height:9.2cqi}.gw-mode{font-size:var(--wl)!important;height:9.2cqi}.gw-mode ha-icon{--mdc-icon-size:3cqi}.gw-text{white-space:pre-wrap;text-align:center}.gw-window .gw-content{gap:1cqi}.gw-window span{white-space:nowrap}.gw-shape{pointer-events:none}
-  `;
+    .free-grid{color:var(--text,#f1f3f5)}.grid-widget button{background:var(--bg,#101418)}.grid-widget .gw-fill,.grid-widget .gw-device-label{background:none}.grid-widget .gw-adjust button{background:var(--surface,#1c2228)}.grid-widget small,.grid-widget em{color:var(--muted,#a2adb6)}.grid-widget button[aria-pressed=true]{background:var(--active,#3d2b1d);color:var(--accent,#f4b679)}.grid-widget .gw-toggle{background:var(--muted)}.grid-widget .gw-toggle:after{background:var(--text)}.grid-widget .gw-lock[aria-checked=true] .gw-toggle{background:var(--accent)}.grid-widget .gw-lock[aria-checked=true] .gw-toggle:after{background:var(--bg)}
+    [data-design=contrast] .grid-widget{outline:1px solid var(--muted)}[data-design=minimal] .grid-widget{box-shadow:none}
+  `);
