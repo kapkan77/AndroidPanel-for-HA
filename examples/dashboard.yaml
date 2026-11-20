@@ -1,0 +1,8 @@
+title: Панель комнаты
+views:
+  - title: Комната
+    path: room
+    type: panel
+    cards:
+      - type: custom:hmi-room-panel
+        room: Новая комната

@@ -1,0 +1,20 @@
+{
+  "domain": "hmi_panel",
+  "name": "Home Panel",
+  "codeowners": [
+    "@kapkan77"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/kapkan77/AndroidPanel-for-HA#readme",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/kapkan77/AndroidPanel-for-HA/issues",
+  "requirements": [
+    "adb-shell==0.4.4"
+  ],
+  "version": "0.2.0"
+}

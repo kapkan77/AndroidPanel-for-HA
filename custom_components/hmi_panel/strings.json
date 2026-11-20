@@ -1,0 +1,12 @@
+{
+  "title": "Home Panel",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home Panel constructor",
+        "description": "Enable the visual constructor. Then add the Room panel card to a dashboard and open its editor. Rooms, devices and layouts are configured in each card. No server address or password is required here."
+      }
+    },
+    "abort": {"already_configured": "Home Panel is already enabled. Add more cards for additional panels."}
+  }
+}

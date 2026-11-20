@@ -1,0 +1,7 @@
+{
+  "package": "local.home.hmi",
+  "version": "1.3.0",
+  "version_code": 6,
+  "min_sdk": 26,
+  "sha256": "28e3eaf552adcaa23a63d2190a2038976750ca4108178f6d81d7776e8804828e"
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Home Panel — автономный стенд</title>
+<style>
+body{margin:0;background:#101418;color:#f1f3f5;font:16px system-ui,sans-serif}header{padding:20px 24px;border-bottom:1px solid #354352}h1{margin:0;font-size:22px}p{color:#b4c3d3;line-height:1.6}main{display:grid;grid-template-columns:480px minmax(300px,1fr);gap:32px;padding:24px}button{padding:12px;background:#f4b679;color:#211b14;border:0;border-radius:8px;font:inherit;cursor:pointer}hmi-room-panel{width:480px;display:block}.result{white-space:pre-wrap;color:#b4c3d3}ha-icon{display:inline-flex;align-items:center;justify-content:center;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);font-size:var(--mdc-icon-size,24px)}@media(max-width:900px){main{display:block;padding:0}hmi-room-panel{max-width:100vw}aside{padding:24px}}
+</style>
+<header><h1>Home Panel · автономный стенд</h1><p>Вымышленные данные. Команды устройствам не отправляются.</p></header>
+<main><div id="panel"></div><aside><h2>Визуальный конструктор</h2><div id="editor"></div><p>Этот стенд работает без HA. В настоящем HA поля выбора устройств и значков открывают штатный список.</p><pre class="result" id="result"></pre></aside></main>
+<script type="module">
+import '../custom_components/hmi_panel/www/hmi-room-card.js';
+// Small icon placeholder for the offline harness. HA supplies its own ha-icon.
+customElements.define('ha-icon',class extends HTMLElement{
+  connectedCallback(){const name=this.getAttribute('icon')||'';let paths='M12 3v18M3 12h18';
+    if(name.includes('minus'))paths='M5 12h14';
+    else if(name.includes('power'))paths='M12 2v10M5 5a9 9 0 1 0 14 0';
+    else if(name.includes('cog'))paths='M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1z M15 11a3 3 0 1 0-6 0 3 3 0 0 0 6 0';
+    else if(name.includes('arrow-left'))paths='M20 12H4m6-6-6 6 6 6';
+    else if(name.includes('chevron'))paths='m6 9 6 6 6-6';
+    else if(name.includes('lamp'))paths='M7 3h10l3 11H4z M12 14v6M7 21h10';
+    else if(name.includes('humidifier'))paths='M5 8h14v13H5z M8 11h2m2-8c-2-2 2-3 0-5M7 6c-2-2 2-3 0-5M17 6c-2-2 2-3 0-5';
+    else if(name.includes('window'))paths='M4 3h16v18H4z M12 3v18M4 12h16';
+    else if(name.includes('clock'))paths='M12 8v5h4 M22 12a10 10 0 1 0-20 0 10 10 0 0 0 20 0';
+    else if(name.includes('fire'))paths='M12 2c4 6 8 8 8 13a8 8 0 0 1-16 0c0-3 2-5 4-7 0 4 2 5 3 5 2-3 2-7 1-11z';
+    this.style.cssText='display:inline-flex;align-items:center;justify-content:center;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px);flex-shrink:0';this.attachShadow({mode:'open'}).innerHTML=`<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="${paths}"/></svg>`;}
+});
+const state=(id,value,attrs={})=>({entity_id:id,state:value,attributes:attrs});
+window.demoHass={user:{is_admin:true,id:'demo-admin'},config:{time_zone:'Europe/Berlin',unit_system:{temperature:'°C'}},states:{
+  'climate.demo':state('climate.demo','heat',{friendly_name:'Отопление комнаты',current_temperature:23.4,temperature:23,hvac_modes:['heat','off'],min_temp:5,max_temp:35,target_temp_step:.5}),
+  'sensor.demo_temperature':state('sensor.demo_temperature','23.4',{friendly_name:'Температура комнаты',unit_of_measurement:'°C'}),
+  'sensor.demo_humidity':state('sensor.demo_humidity','46',{friendly_name:'Влажность комнаты',unit_of_measurement:'%'}),
+  'sensor.demo_co2':state('sensor.demo_co2','750',{friendly_name:'CO₂ комнаты',unit_of_measurement:'ppm'}),
+  'sensor.demo_voc':state('sensor.demo_voc','120',{friendly_name:'VOC комнаты',unit_of_measurement:'µg/m³'}),
+  'light.demo':state('light.demo','off',{friendly_name:'Ночник комнаты'}),
+  'fan.demo':state('fan.demo','on',{friendly_name:'Увлажнитель комнаты',water_level:65,preset_mode:'Low',preset_modes:['Auto','Low','Mid','High']}),
+  'binary_sensor.demo_window':state('binary_sensor.demo_window','off',{friendly_name:'Окно комнаты'})
+},callService:async()=>{throw Error('Offline harness does not control devices');}};
+const ids={heating:'climate.demo',temperature:'sensor.demo_temperature',humidity:'sensor.demo_humidity',co2:'sensor.demo_co2',voc:'sensor.demo_voc',nightlight:'light.demo',humidifier:'fan.demo',window:'binary_sensor.demo_window'};
+window.demoConfig={type:'custom:hmi-room-panel',room:'Комната',...ids};
+window.makeEditor=(config=window.demoConfig)=>{
+  document.querySelector('hmi-room-panel-editor')?.remove();const editor=document.createElement('hmi-room-panel-editor');editor.hass=window.demoHass;editor.setConfig(config);document.querySelector('#editor').append(editor);return editor;
+};
+const card=document.createElement('hmi-room-panel');const panelConfig=customElements.get('hmi-room-panel').getStubConfig();for(const w of panelConfig.widgets){if(ids[w.id])w.entity=ids[w.id];if(w.type==='header')w.label='Комната';if(w.id==='climate'){w.entity=ids.heating;w.temperature_entity=ids.temperature;}if(w.id==='heat')w.entity=ids.heating;}card.setConfig({...window.demoConfig,widgets:panelConfig.widgets});card.hass=window.demoHass;card.preview=true;document.querySelector('#panel').append(card);
+window.makeEditor();window.previewReady=true;
+</script></html>

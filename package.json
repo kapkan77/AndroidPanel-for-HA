@@ -1,0 +1,13 @@
+{
+  "name": "androidpanel-for-ha",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "test:browser": "node tests/run-browser.cjs",
+    "docs": "node scripts/build_docs.cjs"
+  },
+  "devDependencies": {
+    "marked": "17.0.5",
+    "playwright": "1.62.1"
+  }
+}
