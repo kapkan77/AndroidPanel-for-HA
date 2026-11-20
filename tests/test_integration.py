@@ -63,6 +63,7 @@ sys.modules["homeassistant"].config_entries = entries
 module("homeassistant.core", HomeAssistant=object)
 module("homeassistant.helpers")
 module("homeassistant.helpers.typing", ConfigType=dict)
+module("homeassistant.helpers.config_validation", config_entry_only_config_schema=lambda domain: {})
 module("homeassistant.helpers.storage", Store=Mock())
 module("homeassistant.data_entry_flow", FlowResult=dict)
 integration = importlib.import_module("custom_components.hmi_panel")
